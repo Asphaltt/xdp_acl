@@ -14,4 +14,5 @@ acl
 *.s
 *.ll
 
-
+# editor
+.vscode/

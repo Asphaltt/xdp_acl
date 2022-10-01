@@ -2,6 +2,7 @@ package main
 
 import (
 	"github.com/cilium/ebpf"
+	"github.com/cilium/ebpf/btf"
 	"github.com/vishvananda/netlink"
 )
 
@@ -71,23 +72,49 @@ func unLoadAllXdpFromLink() {
 }
 
 func fillXdpObjs() {
+	var spec *ebpf.CollectionSpec
+	var err error
 	if !LOAD_XDP_WITH_ELF {
 		// bpf2go
-		if err := LoadXDPACLObjects(&objs, nil); err != nil {
-			zlog.Error(err.Error() + "; Failed to Load XDPACL Objects")
-			panic(err)
-		}
+		spec, err = LoadXDPACL()
 	} else {
 		// load elf file
-		if spec, err := ebpf.LoadCollectionSpec("./xdpacl_bpfel.o"); err != nil {
-			zlog.Error(err.Error() + "; Failed to LoadCollectionSpec")
-			panic(err)
-		} else {
-			if err = spec.LoadAndAssign(&objs, nil); err != nil {
-				zlog.Error(err.Error() + "; Failed to LoadAndAssign")
-				panic(err)
-			}
+		spec, err = ebpf.LoadCollectionSpec("./xdpacl_bpfel.o")
+	}
+
+	if err != nil {
+		zlog.Fatalf("Failed to load spec: %v", err)
+	}
+
+	b2u32 := func(b bool) uint32 {
+		if b {
+			return 1
 		}
+		return 0
+	}
+
+	rw := map[string]interface{}{
+		"XDPACL_DEBUG": b2u32(opt.debug),
+	}
+	if err := spec.RewriteConstants(rw); err != nil {
+		zlog.Fatalf("Failed to rewrite constants: %v: %v", rw, err)
+	}
+
+	var btfSpec *btf.Spec
+	if opt.kernelBTF != "" {
+		btfSpec, err = btf.LoadSpec(opt.kernelBTF)
+	} else {
+		btfSpec, err = btf.LoadKernelSpec()
+	}
+	if err != nil {
+		zlog.Fatalf("Failed to load BTF spec: %v", err)
+	}
+
+	var opts ebpf.CollectionOptions
+	opts.Programs.KernelTypes = btfSpec
+
+	if err := spec.LoadAndAssign(&objs, &opts); err != nil {
+		zlog.Fatalf("Failed to load and assign objs: %v", err)
 	}
 }
 

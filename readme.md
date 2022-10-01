@@ -1,3 +1,26 @@
+# XDP ACL
+
+Refactor the eBPF C code and Go code of
+[xdp_acl](https://github.com/glenn-wang/xdp_acl).
+
+## Updated
+
+1. Use CO-RE to enable XDP log with `--debug` dynamically.
+2. Use specified BTF file with `--kernel-btf`.
+
+## P.S.
+
+The original reference is [eBPF / XDP based firewall and packet
+filtering](http://vger.kernel.org/lpc_net2018_talks/ebpf-firewall-paper-LPC.pdf).
+
+From the reference, the advice is really important to deploy XDP ACL.
+
+```txt
+We do not write or update these maps once the program is loaded to avoid any lock contentions. Instead, for any change in configuration, we create a new program with new maps and modify the XDP program in the program array.
+```
+
+---
+
 #### Inspired by [this paper](https://blog.csdn.net/ByteDanceTech/article/details/106632252)
 
 

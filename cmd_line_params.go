@@ -23,7 +23,10 @@ type CliParams struct {
 	lastRuleAccept  bool
 	lastRuleDisplay bool
 
-	conf string
+	debug bool
+
+	conf      string
+	kernelBTF string
 }
 
 var opt CliParams
@@ -48,6 +51,9 @@ var rootCmd = &cobra.Command{
 
 func cmdLineInputParamsInit() {
 	rootCmd.Flags().StringSliceVarP(&(opt.dev), "dev", "D", []string{}, "Input Your Net Device Name (multi dev has to be separated by ',')")
+
+	rootCmd.Flags().BoolVar(&opt.debug, "debug", false, "Print XDP log")
+	rootCmd.Flags().StringVar(&opt.kernelBTF, "kernel-btf", "", "Specify kernel BTF file")
 
 	rootCmd.Flags().BoolVarP(&(opt.auto), "auto-mode", "A", true, "Auto-detect SKB or Native mode")
 	rootCmd.Flags().BoolVarP(&(opt.skb), "skb-mode", "S", false, "Load XDP program in SKB mode")

@@ -8,10 +8,10 @@ import (
 	"syscall"
 	"time"
 
-	"golang.org/x/sys/unix"
+	"github.com/cilium/ebpf/rlimit"
 )
 
-//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc=clang XDPACL xdp_acl.c --  -I./include -nostdinc  -Wno-unused-value -Wno-compare-distinct-pointer-types -o3
+//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc=clang XDPACL ./ebpf/xdp_acl.c --  -D__TARGET_ARCH_x86 -I./ebpf/headers -nostdinc  -Wall -o3
 
 var wgGlobal sync.WaitGroup
 
@@ -33,10 +33,7 @@ func xdpACLIinit() {
 }
 
 func setResourceLimit() {
-	if err := unix.Setrlimit(unix.RLIMIT_MEMLOCK, &unix.Rlimit{
-		Cur: unix.RLIM_INFINITY,
-		Max: unix.RLIM_INFINITY,
-	}); err != nil {
+	if err := rlimit.RemoveMemlock(); err != nil {
 		zlog.Error(err.Error() + "; Failed to adjust rlimit")
 		panic(err)
 	}
@@ -65,7 +62,6 @@ func holdApp() {
 }
 
 func main() {
-
 	b := time.Now()
 	// 解析命令行参数
 	cmdLineInputParamsInit()
