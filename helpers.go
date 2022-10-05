@@ -16,13 +16,6 @@ const (
 	CIDR_UNKNOWN  CIDR_COMPARE_RET = 5
 )
 
-// host to network byte order
-func htons(h uint16) uint16 {
-	data := make([]byte, 2)
-	binary.LittleEndian.PutUint16(data, h)
-	return binary.BigEndian.Uint16(data)
-}
-
 // network to host byte order
 func ntohs(n uint16) uint16 {
 	data := make([]byte, 2)
@@ -75,7 +68,6 @@ func (a *SpecialCidr) contains(b *SpecialCidr) bool {
 }
 
 func compareCIDR(a, b *SpecialCidr) CIDR_COMPARE_RET {
-
 	if a.First == b.First && a.MaskSize == b.MaskSize {
 		return CIDR_EQUAL
 	} else if a.contains(b) {
@@ -85,7 +77,6 @@ func compareCIDR(a, b *SpecialCidr) CIDR_COMPARE_RET {
 	} else {
 		return CIDR_NO_CROSS
 	}
-
 }
 
 func removeDupRuleNo(rulesNoArr *[]uint32) {
@@ -124,7 +115,6 @@ func genRuleActionValue(strategy uint64, ruleActionArr *[]RuleAction) {
 
 // todo 优化
 func getRulePriorityFromRuleActionKey(ruleActionKey *RuleActionKey, rulePriority *uint64) {
-
 	inx := uint64(0)
 	for ; inx < BITMAP_SIZE; inx++ {
 		if (ruleActionKey.BitmapFFS>>inx)&0x01 > 0 {
@@ -162,7 +152,6 @@ func ipMapKeyCanDel(delSpecialCidr *SpecialCidr, mapName string) bool {
 }
 
 func getLpmKey(specialCidrPtr *SpecialCidr) LpmKeyV4 {
-
 	key := LpmKeyV4{mask: specialCidrPtr.MaskSize, data: specialCidrPtr.First}
 
 	return key

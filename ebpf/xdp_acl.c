@@ -66,7 +66,7 @@ static volatile const __u32 XDPACL_DEBUG = 0;
 
 struct lpm_key_ipv4 {
     __u32 prefixlen; /* up to 32 for AF_INET, 128 for AF_INET6 */
-    __u8 data[4];    /* Arbitrary size */
+    __u32 data;      /* network order */
 } __attribute__((aligned(4)));
 
 // v4 v6 可共用
@@ -215,12 +215,6 @@ static __always_inline int parse_udphdr(struct hdr_cursor *nh,
     return len;
 }
 
-static __always_inline void get_lpm_prefix_data_v4(__u32 addr, struct lpm_key_ipv4 *lpm_key_v4) {
-    lpm_key_v4->data[0] = addr & 0xff; // bpf_ntohl(iphdr_l3->saddr);
-    lpm_key_v4->data[1] = (addr >> 8) & 0xff;
-    lpm_key_v4->data[2] = (addr >> 16) & 0xff;
-    lpm_key_v4->data[3] = (addr >> 24) & 0xff;
-}
 
 static __always_inline void get_bitmap_array_for_tcp_v4(__u64 *rule_array[], __u32 *rule_array_len, int *proto_type, struct iphdr *iphdr_l3, struct tcphdr *tcphdr_l4) {
     struct lpm_key_ipv4 lpm_key_v4;
@@ -229,17 +223,15 @@ static __always_inline void get_bitmap_array_for_tcp_v4(__u64 *rule_array[], __u
     // addr src
     lpm_key_v4.prefixlen = LPM_PREFIXLEN_IPv4;
 
-    get_lpm_prefix_data_v4(iphdr_l3->saddr, &lpm_key_v4);
-
+    lpm_key_v4.data = iphdr_l3->saddr;
     bitmap = bpf_map_lookup_elem(&src_v4, &lpm_key_v4);
-
     if (NULL != bitmap) {
         bpf_debug_printk("hit addr src: %u\n", bpf_ntohl(iphdr_l3->saddr));
         rule_array[(*rule_array_len)++] = bitmap;
     }
 
     // addr dst
-    get_lpm_prefix_data_v4(iphdr_l3->daddr, &lpm_key_v4);
+    lpm_key_v4.data = iphdr_l3->daddr;
     bitmap = bpf_map_lookup_elem(&dst_v4, &lpm_key_v4);
     if (NULL != bitmap) {
         bpf_debug_printk("hit addr dst: %u\n", bpf_ntohl(iphdr_l3->daddr));
@@ -280,7 +272,7 @@ static __always_inline void get_bitmap_array_for_udp_v4(__u64 *rule_array[], __u
     // addr src
     lpm_key_v4.prefixlen = LPM_PREFIXLEN_IPv4;
 
-    get_lpm_prefix_data_v4(iphdr_l3->saddr, &lpm_key_v4);
+    lpm_key_v4.data = iphdr_l3->saddr;
     bitmap = bpf_map_lookup_elem(&src_v4, &lpm_key_v4);
     if (NULL != bitmap) {
         bpf_debug_printk("hit addr src: %u\n", bpf_ntohl(iphdr_l3->saddr));
@@ -288,7 +280,7 @@ static __always_inline void get_bitmap_array_for_udp_v4(__u64 *rule_array[], __u
     }
 
     // addr dst
-    get_lpm_prefix_data_v4(iphdr_l3->daddr, &lpm_key_v4);
+    lpm_key_v4.data = iphdr_l3->daddr;
     bitmap = bpf_map_lookup_elem(&dst_v4, &lpm_key_v4);
     if (NULL != bitmap) {
         bpf_debug_printk("hit addr dst: %u\n", bpf_ntohl(iphdr_l3->daddr));
@@ -326,7 +318,7 @@ static __always_inline void get_bitmap_array_for_icmp_v4(__u64 *rule_array[], __
     // addr src
     lpm_key_v4.prefixlen = LPM_PREFIXLEN_IPv4;
 
-    get_lpm_prefix_data_v4(iphdr_l3->saddr, &lpm_key_v4);
+    lpm_key_v4.data = iphdr_l3->saddr;
     bitmap = bpf_map_lookup_elem(&src_v4, &lpm_key_v4);
     if (NULL != bitmap) {
         bpf_debug_printk("hit addr src: %u\n", bpf_ntohl(iphdr_l3->saddr));
@@ -334,7 +326,7 @@ static __always_inline void get_bitmap_array_for_icmp_v4(__u64 *rule_array[], __
     }
 
     // addr dst
-    get_lpm_prefix_data_v4(iphdr_l3->daddr, &lpm_key_v4);
+    lpm_key_v4.data = iphdr_l3->daddr;
     bitmap = bpf_map_lookup_elem(&dst_v4, &lpm_key_v4);
     if (NULL != bitmap) {
         bpf_debug_printk("hit addr dst: %u\n", bpf_ntohl(iphdr_l3->daddr));
@@ -449,7 +441,8 @@ static __always_inline int get_rule_action_v4(__u64 *rule_array[], __u32 *rule_a
         bpf_debug_printk("result => hit bitmap[%d]: %llu; ffs: %llu; normal\n",
                          rule_array_index, hit_rules, key.bitmap_ffs);
         bpf_debug_printk("hit bitmap[%d]: ffs: %llu; action: %d\n", key.bitmap_ffs, value->action);
-        (value->count)++;
+
+        __sync_fetch_and_add(&value->count, 1);
         return value->action;
     }
 

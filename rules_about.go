@@ -107,18 +107,14 @@ func rulePriorityIsValid(rulePriority uint32) bool {
 
 func delRulePriorityFromCidrMapOwnRuleArrAdvance(rulePriority uint32, cidrMapOwnRuleArrAdvance map[SpecialCidr][]uint32) {
 	for delCidr := range cidrMapOwnRuleArrAdvance {
-
 		for ruleInx := 0; ruleInx < len(cidrMapOwnRuleArrAdvance[delCidr]); ruleInx++ {
-
 			if rulePriority == cidrMapOwnRuleArrAdvance[delCidr][ruleInx] {
 				cidrMapOwnRuleArrAdvance[delCidr] = append(cidrMapOwnRuleArrAdvance[delCidr][:ruleInx], cidrMapOwnRuleArrAdvance[delCidr][ruleInx+1:]...)
 				if len(cidrMapOwnRuleArrAdvance[delCidr]) == 0 {
 					delete(cidrMapOwnRuleArrAdvance, delCidr)
 				}
 			}
-
 		}
-
 	}
 }
 
@@ -199,7 +195,6 @@ func checkRulePriorityAndIpMapSize(rulePriority uint32, action NewOpsAction, src
 }
 
 func checkCidrValidAndCidrRelation(rulePriority uint32, specialCidrMapTmp map[SpecialCidr]uint8, addrArr *[]Addr, name string) string {
-
 	// cidr 是否相互包含
 	for addrInx := 0; addrInx < len(*addrArr); addrInx++ {
 		_, ipv4NetNew, err := net.ParseCIDR((*addrArr)[addrInx].CidrUser)

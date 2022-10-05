@@ -55,9 +55,7 @@ type RuleActionMapInfoArr struct {
 	RuleActionArr []RuleActionMapInfo `json:"rule_action_arr"`
 }
 
-var (
-	webSignal chan int
-)
+var webSignal chan int
 
 func webAppExit(app *iris.Application) {
 	<-webSignal
@@ -184,7 +182,6 @@ func addRule(ctx iris.Context) {
 }
 
 func delRule(ctx iris.Context) {
-
 	priorityInt, err := strconv.Atoi(ctx.Request().URL.Query().Get("priority"))
 	if nil != err {
 		errInfo := err.Error()
@@ -258,7 +255,6 @@ func delRule(ctx iris.Context) {
 	ctx.JSON(struct {
 		Priority int32 `json:"priority"`
 	}{Priority: int32(priorityInt)})
-
 }
 
 func checkMapParams(ctx iris.Context, bpfMapParamPtr *BpfMapParam) string {
@@ -321,9 +317,7 @@ next:
 
 				bpfMapParamPtr.IpMapKey = getLpmKey(&cidrSpecial)
 			}
-
 		} else if mapName == MAP_TYPE_PORT_SRC || mapName == MAP_TYPE_PORT_DST {
-
 			if tmpPort, err := strconv.ParseUint(mapKey, 10, 16); err != nil {
 				return fmt.Sprintf("mapKey: %s is invalid; err: %s", mapKey, err.Error())
 			} else {
@@ -332,7 +326,6 @@ next:
 				}
 				bpfMapParamPtr.PortMapKey = PortMapKey(htons(uint16(tmpPort)))
 			}
-
 		} else {
 			// MAP_TYPE_PROTO
 			if mapKey == "tcp" {
@@ -385,7 +378,6 @@ func getRulePriorityFromBitmap(ruleBitmapArrPtr *RuleBitmapArrV4, filter string,
 }
 
 func getBpfMapData(ctx iris.Context) {
-
 	var bpfMapParam BpfMapParam
 
 	if errInfo := checkMapParams(ctx, &bpfMapParam); errInfo != "" {
@@ -454,11 +446,9 @@ func getBpfMapData(ctx iris.Context) {
 	getRulePriorityFromBitmap(&ruleValue, bpfMapParam.RuleFilter, &ruleRes)
 
 	ctx.JSON(ruleRes)
-
 }
 
 func webInit(opt *CliParams) {
-
 	app := iris.New()
 
 	go webAppExit(app)
@@ -497,7 +487,6 @@ func webInit(opt *CliParams) {
 			zlog.Infof("web server is closed")
 		}
 	}
-
 }
 
 // jsonBytes, err := json.Marshal(rules)

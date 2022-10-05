@@ -8,7 +8,7 @@ import (
 
 var zlog *zap.SugaredLogger
 
-func InitLogger() {
+func init() {
 	writeSyncer := getLogWriter()
 	encoder := getEncoder()
 
@@ -20,13 +20,12 @@ func InitLogger() {
 		// zapcore.DebugLevel,
 	)
 
-	logger := zap.New(core, zap.AddCaller())
+	logger := zap.New(core, zap.AddCaller(), zap.AddCallerSkip(1))
 
 	zlog = logger.Sugar()
 }
 
 func getEncoder() zapcore.Encoder {
-
 	encoderConfig := zap.NewProductionEncoderConfig()
 	encoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
 	encoderConfig.EncodeLevel = zapcore.CapitalLevelEncoder

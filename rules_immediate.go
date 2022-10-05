@@ -40,7 +40,6 @@ var (
 )
 
 func updateIPMap(wgWorkerPtr *sync.WaitGroup, newOpsBufferForIP chan NewIpMapOps, bpfMapForIP *ebpf.Map, specialCidrMapRuleArr map[SpecialCidr][]uint32, name string) {
-
 	zlog.Debug(name, "🍄 start 🍄")
 
 	for newIpMapOps := range newOpsBufferForIP {
@@ -160,7 +159,6 @@ func updateIPMap(wgWorkerPtr *sync.WaitGroup, newOpsBufferForIP chan NewIpMapOps
 }
 
 func updatePortMap(wgWorkerPtr *sync.WaitGroup, newOpsBufferForPort chan NewPortMapOps, bpfMapForPort *ebpf.Map, commonPortRulePtr *RuleBitmapArrV4, specifiedPortRule map[uint16][]uint32, name string) {
-
 	zlog.Debug(name, "🍁 start 🍁")
 
 	var portMapKey uint16
@@ -171,7 +169,6 @@ func updatePortMap(wgWorkerPtr *sync.WaitGroup, newOpsBufferForPort chan NewPort
 		b := time.Now()
 
 		if NEW_OPS_ACTION_ADD == newPortMapOps.Action {
-
 			if len(newPortMapOps.PortArr) == 0 {
 				setBitmapBit(commonPortRulePtr, newPortMapOps.Priority)
 				// 下发配置
@@ -211,9 +208,7 @@ func updatePortMap(wgWorkerPtr *sync.WaitGroup, newOpsBufferForPort chan NewPort
 					}
 				}
 			}
-
 		} else if NEW_OPS_ACTION_DEL == newPortMapOps.Action {
-
 			if len(newPortMapOps.PortArr) == 0 {
 				// 生成配置
 				resetBitmapBit(commonPortRulePtr, newPortMapOps.Priority)
@@ -277,7 +272,6 @@ func updatePortMap(wgWorkerPtr *sync.WaitGroup, newOpsBufferForPort chan NewPort
 }
 
 func updateProtoMap(wgWorkerPtr *sync.WaitGroup, newOpsBufferForProto chan NewProtoMapOps, bpfMapForProto *ebpf.Map, name string) {
-
 	zlog.Debug(name, "🍟 start 🍟")
 	// icmp: 1; tcp: 6; udp: 17;
 
@@ -331,7 +325,6 @@ func getProtos(protos uint8) []ProtoMapKey {
 }
 
 func updateRuleActionMap(newOps *NewOps, bpfMapForRuleAction *ebpf.Map, name string) {
-
 	var ruleActionKey RuleActionKey
 	genRuleActionKey(uint64(newOps.Rule.Priority), &ruleActionKey)
 
@@ -353,7 +346,6 @@ func updateRuleActionMap(newOps *NewOps, bpfMapForRuleAction *ebpf.Map, name str
 }
 
 func adjustRuleList(newOps *NewOps) (string, error) {
-
 	if NEW_OPS_ACTION_ADD == newOps.Action {
 		// 添加到首部
 		ruleList = append(RuleArr{newOps.Rule}, ruleList...)
@@ -383,7 +375,6 @@ func adjustRuleList(newOps *NewOps) (string, error) {
 }
 
 func loadImmediateRules(name string) {
-
 	newOpsBufferForIPSrc, newOpsBufferForIPDst := make(chan NewIpMapOps, 1), make(chan NewIpMapOps, 1)
 
 	newOpsBufferForPortSrc, newOpsBufferForPortDst := make(chan NewPortMapOps, 1), make(chan NewPortMapOps, 1)

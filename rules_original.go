@@ -222,7 +222,6 @@ func genRuleActionArrAndLoadIntoMap(originalRulesWgPtr *sync.WaitGroup, bpfMapFo
 }
 
 func loadOriginalRules() {
-
 	var originalRulesWg sync.WaitGroup
 
 	originalRulesWg.Add(6)
@@ -245,7 +244,6 @@ func loadOriginalRules() {
 }
 
 func preOriginalRules() {
-
 	ruleList.Load(opt.conf)
 
 	// 按照添加时间逆序排序（最新的在前）
