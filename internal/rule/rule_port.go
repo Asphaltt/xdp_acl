@@ -30,13 +30,13 @@ func (r *Rules) addDstPortPriority(rule *Rule) {
 	}
 }
 
-func (r *Rules) fixPortPriority(all []uint32, m map[uint16][]uint32) {
+func (r *Rules) fixPortPriority(all []uint32, arr [][]uint32) {
 	if len(all) == 0 {
 		return
 	}
 
 	for port := portBegin; port <= portEnd; port++ {
-		m[port] = append(m[port], all...)
+		arr[port] = append(arr[port], all...)
 	}
 }
 

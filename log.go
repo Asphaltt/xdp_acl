@@ -20,7 +20,7 @@ func init() {
 		// zapcore.DebugLevel,
 	)
 
-	logger := zap.New(core, zap.AddCaller(), zap.AddCallerSkip(1))
+	logger := zap.New(core, zap.AddCaller())
 
 	zlog = logger.Sugar()
 }

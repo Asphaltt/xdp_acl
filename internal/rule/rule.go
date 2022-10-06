@@ -33,8 +33,8 @@ const (
 	protoTCP  uint32 = 6
 	protoUDP  uint32 = 17
 
-	portBegin uint16 = 0
-	portEnd   uint16 = 65535
+	portBegin = 0
+	portEnd   = 65535
 )
 
 type Addr struct {
@@ -60,7 +60,16 @@ func (r *Rule) onlyICMP() bool {
 	return (r.Protos&icmpBit != 0) && (r.Protos&(tcpBit|udpBit) == 0)
 }
 
+func (r *Rule) IsFixed(lastRuleFixed bool) bool {
+	return lastRuleFixed && r.Priority == maxPriority
+}
+
 type Rules struct {
+	file string
+
+	lastRuleAccept bool
+	lastRuleFixed  bool
+
 	rules []*Rule
 
 	priorityMu sync.Mutex
@@ -71,73 +80,94 @@ type Rules struct {
 
 	srcCIDRPriorities  map[netip.Prefix][]uint32
 	dstCIDRPriorities  map[netip.Prefix][]uint32
-	srcPortPriorities  map[uint16][]uint32
-	dstPortPriorities  map[uint16][]uint32
+	srcPortPriorities  [][]uint32
+	dstPortPriorities  [][]uint32
 	protocolPriorities map[uint32][]uint32
 	priorityActions    map[uint32]uint8
 }
 
+func (r *Rules) Rules() []*Rule                               { return r.rules }
 func (r *Rules) SrcCIDRPriorities() map[netip.Prefix][]uint32 { return r.srcCIDRPriorities }
 func (r *Rules) DstCIDRPriorities() map[netip.Prefix][]uint32 { return r.dstCIDRPriorities }
-func (r *Rules) SrcPortPriorities() map[uint16][]uint32       { return r.srcPortPriorities }
-func (r *Rules) DstPortPriorities() map[uint16][]uint32       { return r.dstPortPriorities }
+func (r *Rules) SrcPortPriorities() [][]uint32                { return r.srcPortPriorities }
+func (r *Rules) DstPortPriorities() [][]uint32                { return r.dstPortPriorities }
 func (r *Rules) ProtocolPriorities() map[uint32][]uint32      { return r.protocolPriorities }
 func (r *Rules) PriorityActions() map[uint32]uint8            { return r.priorityActions }
 
-func newRules() *Rules {
-	var r Rules
+func (r *Rules) init() {
 	r.priorities = make(map[uint32]struct{})
 	r.srcCIDRPriorities = make(map[netip.Prefix][]uint32)
 	r.dstCIDRPriorities = make(map[netip.Prefix][]uint32)
-	r.srcPortPriorities = make(map[uint16][]uint32)
-	r.dstPortPriorities = make(map[uint16][]uint32)
+	r.srcPortPriorities = make([][]uint32, portEnd+1)
+	r.dstPortPriorities = make([][]uint32, portEnd+1)
 	r.protocolPriorities = make(map[uint32][]uint32, 3) // ICMP, TCP, UDP
 	r.priorityActions = make(map[uint32]uint8)
-	return &r
 }
 
-func loadRules(fpath string) (*Rules, error) {
+func (r *Rules) ClearCache() {
+	r.priorities = nil
+	r.srcCIDRPriorities = nil
+	r.dstCIDRPriorities = nil
+	r.srcPortPriorities = nil
+	r.dstPortPriorities = nil
+	r.protocolPriorities = nil
+	r.priorityActions = nil
+}
+
+func loadRules(fpath string) ([]*Rule, error) {
 	fd, err := os.Open(fpath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open %s: %w", fpath, err)
 	}
 	defer fd.Close()
 
-	r := newRules()
-	err = json.NewDecoder(fd).Decode(&r.rules)
+	var rules []*Rule
+	err = json.NewDecoder(fd).Decode(&rules)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode rules from %s: %w", fpath, err)
 	}
 
-	return r, nil
+	return rules, nil
 }
 
 func LoadRules(flags *flag.Flags) (*Rules, error) {
-	r, err := loadRules(flags.Conf)
+	rules, err := loadRules(flags.Conf)
 	if err != nil {
 		return nil, err
 	}
 
-	r.sort()
+	var r Rules
+	r.file = flags.Conf
+	r.rules = rules
+	r.lastRuleAccept = flags.LastRuleAccept
+	r.lastRuleFixed = flags.LastRuleFixed
 
-	if flags.LastRuleFixed {
-		r.fixLastRule(flags.LastRuleAccept)
+	return &r, r.FixRules()
+}
+
+func (r *Rules) FixRules() error {
+	r.init()
+
+	r.sortRules()
+
+	if r.lastRuleFixed {
+		r.fixLastRule(r.lastRuleAccept)
 	}
 
-	r.fixDeletion(flags.LastRuleFixed)
+	r.fixDeletion(r.lastRuleFixed)
 
 	if err := r.check(); err != nil {
-		return nil, err
+		return err
 	}
 
 	if err := r.addPriorities(); err != nil {
-		return nil, err
+		return err
 	}
 
-	return r, nil
+	return nil
 }
 
-func (r *Rules) sort() {
+func (r *Rules) sortRules() {
 	sort.Slice(r.rules, func(i, j int) bool {
 		return r.rules[i].CreateTime > r.rules[j].CreateTime
 	})
@@ -257,4 +287,40 @@ func (r *Rules) addProtocolPriority(rule *Rule) {
 
 func (r *Rules) addPriorityAction(rule *Rule) {
 	r.priorityActions[rule.Priority] = rule.Strategy
+}
+
+func (r *Rules) AddRule(rule *Rule) {
+	r.rules = append(r.rules, rule)
+}
+
+func (r *Rules) DeleteRule(rule *Rule) {
+	for i := range r.rules {
+		if r.rules[i].Priority == rule.Priority {
+			rules := make([]*Rule, len(r.rules)-1)
+			copy(rules[:i], r.rules[:i])
+			copy(rules[i:], r.rules[i+1:])
+			r.rules = rules
+			return
+		}
+	}
+}
+
+func (r *Rules) Save() error {
+	data, err := json.MarshalIndent(r.rules, "", "    ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal rules: %w", err)
+	}
+
+	fd, err := os.OpenFile(r.file, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		return fmt.Errorf("failed to open file %s to write rules: %w", r.file, err)
+	}
+	defer fd.Close()
+
+	_, err = fd.Write(data)
+	if err != nil {
+		return fmt.Errorf("failed to write rules to %s: %w", r.file, err)
+	}
+
+	return nil
 }

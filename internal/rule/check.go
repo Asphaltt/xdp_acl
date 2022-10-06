@@ -2,7 +2,7 @@ package rule
 
 import "fmt"
 
-func (r *Rule) checkPriority() error {
+func (r *Rule) CheckPriority() error {
 	if minPriority <= r.Priority && r.Priority <= maxPriority {
 		return nil
 	}
@@ -30,7 +30,7 @@ func (r *Rule) checkStrategy() error {
 func (r *Rule) check() error {
 	type checker func() error
 	checkers := []checker{
-		r.checkPriority,
+		r.CheckPriority,
 		r.checkProtos,
 		r.checkStrategy,
 	}

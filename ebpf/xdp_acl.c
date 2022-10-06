@@ -242,7 +242,7 @@ static __always_inline void get_bitmap_array_for_tcp_v4(__u64 *rule_array[], __u
     __u16 port = tcphdr_l4->source; // bpf_ntohs(tcphdr_l4->source);
     bitmap = bpf_map_lookup_elem(&sport_v4, &port);
     if (NULL != bitmap) {
-        bpf_debug_printk("hit port srd: %u; bitmap[0]: %llu\n", bpf_ntohs(tcphdr_l4->source), bitmap[0]);
+        bpf_debug_printk("hit port src: %u; bitmap[0]: %llu\n", bpf_ntohs(tcphdr_l4->source), bitmap[0]);
         rule_array[(*rule_array_len)++] = bitmap;
     }
 
