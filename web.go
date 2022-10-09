@@ -8,21 +8,19 @@ import (
 	"sync"
 	"time"
 
-	"xdp_acl/internal/rule"
-
 	"github.com/kataras/iris/v12"
 )
 
 type webApp struct {
 	mu    sync.Mutex
-	rules *rule.Rules
+	rules *Rules
 	xdp   *xdp
 
 	lastRuleFixed   bool
 	lastRuleDisplay bool
 }
 
-func runWebApp(ctx context.Context, flags *Flags, rules *rule.Rules, xdp *xdp) error {
+func runWebApp(ctx context.Context, flags *Flags, rules *Rules, xdp *xdp) error {
 	var w webApp
 	w.rules = rules
 	w.xdp = xdp
@@ -97,7 +95,7 @@ func (w *webApp) getHitCount(ctx iris.Context) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
-	hits, err := retrieveHitCount(w.xdp.objs.RuleActionV4, len(w.rules.Rules()))
+	hits, err := retrieveHitCount(w.xdp.updatableObjs.RuleActionV4, len(w.rules.rules))
 	if err != nil {
 		zlog.Errorf("Failed to retrieve hit count: %v", err)
 		ctx.StatusCode(iris.StatusInternalServerError)
@@ -117,7 +115,7 @@ func (w *webApp) getHitCount(ctx iris.Context) {
 }
 
 func (w *webApp) addRule(ctx iris.Context) {
-	var rule rule.Rule
+	var rule Rule
 	if err := ctx.ReadJSON(&rule); err != nil {
 		zlog.Errorf("Failed to add rule: %v", err)
 
@@ -138,7 +136,7 @@ func (w *webApp) addRule(ctx iris.Context) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
-	hitcount, err := getHitCount(w.xdp.objs.RuleActionV4, w.rules)
+	hitcount, err := getHitCount(w.xdp.updatableObjs.RuleActionV4, w.rules)
 	if err != nil {
 		zlog.Errorf("Failed to delete rule: %v", err)
 
@@ -172,7 +170,7 @@ func (w *webApp) delRule(ctx iris.Context) {
 		return
 	}
 
-	var rule rule.Rule
+	var rule Rule
 	rule.Priority = uint32(priority)
 
 	if rule.IsFixed(w.lastRuleFixed) {
@@ -187,7 +185,7 @@ func (w *webApp) delRule(ctx iris.Context) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
-	hitcount, err := getHitCount(w.xdp.objs.RuleActionV4, w.rules)
+	hitcount, err := getHitCount(w.xdp.updatableObjs.RuleActionV4, w.rules)
 	if err != nil {
 		zlog.Errorf("Failed to delete rule: %v", err)
 

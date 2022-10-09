@@ -7,8 +7,6 @@ import (
 	"syscall"
 	"time"
 
-	"xdp_acl/internal/rule"
-
 	"github.com/cilium/ebpf/rlimit"
 	"golang.org/x/sync/errgroup"
 )
@@ -30,7 +28,7 @@ func main() {
 	}
 
 	ts := time.Now()
-	rules, err := rule.LoadRules(flags.Conf, flags.LastRuleAccept, flags.LastRuleFixed)
+	rules, err := LoadRules(flags.Conf, flags.LastRuleAccept, flags.LastRuleFixed)
 	if err != nil {
 		zlog.Errorf("Failed to load rules: %v", err)
 		return

@@ -1,4 +1,4 @@
-package rule
+package main
 
 func (r *Rules) addSrcPortPriority(rule *Rule) {
 	if rule.onlyICMP() {

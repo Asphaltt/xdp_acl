@@ -1,4 +1,4 @@
-package rule
+package main
 
 import (
 	"encoding/json"
@@ -10,9 +10,6 @@ import (
 )
 
 const (
-	bitmapSize = 64
-	bitmapMask = bitmapSize - 1
-
 	xdpDrop = 1
 	xdpPass = 2
 
@@ -90,14 +87,6 @@ type Rules struct {
 	protocolPriorities map[uint32][]uint32
 	priorityActions    []uint8
 }
-
-func (r *Rules) Rules() []*Rule                               { return r.rules }
-func (r *Rules) SrcCIDRPriorities() map[netip.Prefix][]uint32 { return r.srcCIDRPriorities }
-func (r *Rules) DstCIDRPriorities() map[netip.Prefix][]uint32 { return r.dstCIDRPriorities }
-func (r *Rules) SrcPortPriorities() [][]uint32                { return r.srcPortPriorities }
-func (r *Rules) DstPortPriorities() [][]uint32                { return r.dstPortPriorities }
-func (r *Rules) ProtocolPriorities() map[uint32][]uint32      { return r.protocolPriorities }
-func (r *Rules) PriorityActions() []uint8                     { return r.priorityActions }
 
 func (r *Rules) init() {
 	r.allSrcPortPriorities = nil

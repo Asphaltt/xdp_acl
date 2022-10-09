@@ -7,24 +7,30 @@ import (
 	"runtime"
 	"unsafe"
 
-	"xdp_acl/internal/rule"
-
 	"github.com/cilium/ebpf"
 	"golang.org/x/sync/errgroup"
 )
 
-func (x *xdp) doStoreRules(rules *rule.Rules, prevHitcount map[uint32]uint64) error {
+func (x *xdp) doStoreRules(rules *Rules, prevHitcount map[uint32]uint64) error {
 	var errg errgroup.Group
 
-	errg.Go(func() error { return storePortRules(rules.SrcPortPriorities(), x.objs.SportV4, rules.BitmapArraySize) })
-	errg.Go(func() error { return storePortRules(rules.DstPortPriorities(), x.objs.DportV4, rules.BitmapArraySize) })
-	errg.Go(func() error { return storeAddrRules(rules.SrcCIDRPriorities(), x.objs.SrcV4, rules.BitmapArraySize) })
-	errg.Go(func() error { return storeAddrRules(rules.DstCIDRPriorities(), x.objs.DstV4, rules.BitmapArraySize) })
 	errg.Go(func() error {
-		return storeProtocolRules(rules.ProtocolPriorities(), x.objs.ProtoV4, rules.BitmapArraySize)
+		return storePortRules(rules.srcPortPriorities, x.updatableObjs.SportV4, rules.BitmapArraySize)
 	})
 	errg.Go(func() error {
-		return storeActions(rules.PriorityActions(), rules, x.objs.RuleActionV4, prevHitcount)
+		return storePortRules(rules.dstPortPriorities, x.updatableObjs.DportV4, rules.BitmapArraySize)
+	})
+	errg.Go(func() error {
+		return storeAddrRules(rules.srcCIDRPriorities, x.updatableObjs.SrcV4, rules.BitmapArraySize)
+	})
+	errg.Go(func() error {
+		return storeAddrRules(rules.dstCIDRPriorities, x.updatableObjs.DstV4, rules.BitmapArraySize)
+	})
+	errg.Go(func() error {
+		return storeProtocolRules(rules.protocolPriorities, x.updatableObjs.ProtoV4, rules.BitmapArraySize)
+	})
+	errg.Go(func() error {
+		return storeActions(rules.priorityActions, rules, x.updatableObjs.RuleActionV4, prevHitcount)
 	})
 
 	err := errg.Wait()
@@ -120,7 +126,7 @@ func getActionValue(action uint8, count uint64) []actionValue {
 }
 
 // storeActions retrieves the old-hit-count-data from oldMap, and updates it to m.
-func storeActions(actions []uint8, r *rule.Rules, m *ebpf.Map, prevHitCount map[uint32]uint64) error {
+func storeActions(actions []uint8, r *Rules, m *ebpf.Map, prevHitCount map[uint32]uint64) error {
 	for priority, action := range actions {
 		key, val := uint32(priority), getActionValue(action, prevHitCount[r.GetRealPriority(uint32(priority))])
 		if err := m.Put(key, val); err != nil {
@@ -131,8 +137,8 @@ func storeActions(actions []uint8, r *rule.Rules, m *ebpf.Map, prevHitCount map[
 	return nil
 }
 
-func getHitCount(m *ebpf.Map, r *rule.Rules) (map[uint32]uint64, error) {
-	counts, err := retrieveHitCount(m, len(r.Rules()))
+func getHitCount(m *ebpf.Map, r *Rules) (map[uint32]uint64, error) {
+	counts, err := retrieveHitCount(m, len(r.rules))
 	if err != nil {
 		return nil, err
 	}

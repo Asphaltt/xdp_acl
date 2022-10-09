@@ -8,6 +8,8 @@
 
 #include "libxdp_map.h"
 
+static volatile const __u32 XDPACL_BITMAP_ARRAY_SIZE_LIMIT = BITMAP_ARRAY_SIZE;
+
 static volatile const __u32 XDPACL_DEBUG = 0;
 
 #define bpf_debug_printk(fmt, ...)          \
@@ -157,7 +159,7 @@ static __always_inline int get_rule_action_v4(__u64 *rule_array[], __u32 rules_n
         rule_array_index++;
     }
 
-    if (rule_array_index >= BITMAP_ARRAY_SIZE) {
+    if (rule_array_index >= XDPACL_BITMAP_ARRAY_SIZE_LIMIT) {
         // 特殊情况 2
         return XDP_PASS;
     }

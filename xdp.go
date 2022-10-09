@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"time"
 
-	"xdp_acl/internal/rule"
-
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/btf"
 	"github.com/cilium/ebpf/link"
@@ -21,7 +19,8 @@ type xdp struct {
 	bpfSpec *ebpf.CollectionSpec
 	btfSpec *btf.Spec
 
-	objs *XDPACLObjects
+	updatableObjs  *XDPACLObjects
+	persistentObjs *XDPACLObjects
 
 	attachFlags link.XDPAttachFlags
 
@@ -29,7 +28,7 @@ type xdp struct {
 	bitmapArraySize uint32
 }
 
-func newXdp(flags *Flags, r *rule.Rules) (*xdp, error) {
+func newXdp(flags *Flags, r *Rules) (*xdp, error) {
 	var x xdp
 
 	x.devices = make([]netlink.Link, 0, len(flags.Dev))
@@ -61,9 +60,31 @@ func newXdp(flags *Flags, r *rule.Rules) (*xdp, error) {
 
 	x.attachFlags = getXDPAttachFlags(flags.Skb, flags.Native)
 
-	if err := x.loadObj(); err != nil {
-		return nil, fmt.Errorf("failed to load xdp obj: %w", err)
+	x.updatableObjs = new(XDPACLObjects)
+	x.persistentObjs = new(XDPACLObjects)
+
+	if err := x.loadObj(x.persistentObjs, len(r.rules)); err != nil {
+		return nil, fmt.Errorf("failed to load and assign objs: %w", err)
 	}
+
+	if err := x.persistentObjs.Progs.Put(uint32(0), x.persistentObjs.XdpAclFuncImm); err != nil {
+		return nil, fmt.Errorf("failed to update progs bpf map: %w", err)
+	}
+
+	x.updatableObjs.SrcV4 = x.persistentObjs.SrcV4
+	x.updatableObjs.DstV4 = x.persistentObjs.DstV4
+	x.updatableObjs.SportV4 = x.persistentObjs.SportV4
+	x.updatableObjs.DportV4 = x.persistentObjs.DportV4
+	x.updatableObjs.ProtoV4 = x.persistentObjs.ProtoV4
+	x.updatableObjs.RuleActionV4 = x.persistentObjs.RuleActionV4
+	x.updatableObjs.XdpAclFuncImm = x.persistentObjs.XdpAclFuncImm
+	x.persistentObjs.SrcV4 = nil
+	x.persistentObjs.DstV4 = nil
+	x.persistentObjs.SportV4 = nil
+	x.persistentObjs.DportV4 = nil
+	x.persistentObjs.ProtoV4 = nil
+	x.persistentObjs.RuleActionV4 = nil
+	x.persistentObjs.XdpAclFuncImm = nil
 
 	if err := x.storeRules(r, map[uint32]uint64{}); err != nil {
 		_ = x.Close()
@@ -108,34 +129,33 @@ func (x *xdp) loadSpec() error {
 	return err
 }
 
-func (x *xdp) loadObj() error {
+func getBitmapArraySizeLimit(n int) int {
+	return n>>6 + 1 // n/64 + 1
+}
+
+func (x *xdp) loadObj(objs interface{}, ruleNum int) error {
 	rc := map[string]interface{}{
-		"XDPACL_DEBUG": x.debugMode,
+		"XDPACL_DEBUG":                   x.debugMode,
+		"XDPACL_BITMAP_ARRAY_SIZE_LIMIT": uint32(getBitmapArraySizeLimit(ruleNum)),
 	}
 	if err := x.bpfSpec.RewriteConstants(rc); err != nil {
 		return fmt.Errorf("failed to rewrite constants: %v: %w", rc, err)
 	}
 	zlog.Infof("XDP rewrote constants: %v", rc)
 
-	x.objs = new(XDPACLObjects)
-
 	var opts ebpf.CollectionOptions
 	opts.Programs.KernelTypes = x.btfSpec
 	// opts.Programs.LogLevel = ebpf.LogLevelBranch | ebpf.LogLevelInstruction
 	// opts.Programs.LogSize = ebpf.DefaultVerifierLogSize * 10000
 
-	if err := x.bpfSpec.LoadAndAssign(x.objs, &opts); err != nil {
+	if err := x.bpfSpec.LoadAndAssign(objs, &opts); err != nil {
 		return fmt.Errorf("failed to load and assign objs: %w", err)
-	}
-
-	if err := x.objs.Progs.Put(uint32(0), x.objs.XdpAclFuncImm); err != nil {
-		return fmt.Errorf("failed to update progs bpf map: %w", err)
 	}
 
 	return nil
 }
 
-func (x *xdp) storeRules(r *rule.Rules, prevHitcount map[uint32]uint64) error {
+func (x *xdp) storeRules(r *Rules, prevHitcount map[uint32]uint64) error {
 	ts := time.Now()
 
 	err := x.doStoreRules(r, prevHitcount)
@@ -146,7 +166,7 @@ func (x *xdp) storeRules(r *rule.Rules, prevHitcount map[uint32]uint64) error {
 	// the rules' cache is useless
 	r.ClearCache()
 
-	zlog.Infof("🍉 name: %s. Cost: %s.", "storing rules", time.Since(ts))
+	zlog.Infof("🍉 name: storing %d rules. Cost: %s.", len(r.rules), time.Since(ts))
 
 	return nil
 }
@@ -156,7 +176,7 @@ func (x *xdp) attach() error {
 
 	for _, l := range x.devices {
 		xdp, err := link.AttachXDP(link.XDPOptions{
-			Program:   x.objs.XdpAclFunc,
+			Program:   x.persistentObjs.XdpAclFunc,
 			Interface: l.Attrs().Index,
 			Flags:     x.attachFlags,
 		})
@@ -177,19 +197,29 @@ func (x *xdp) detach() {
 	x.xdps = nil
 }
 
-func (x *xdp) Close() error {
-	for _, l := range x.xdps {
-		_ = l.Close()
-	}
-	x.xdps = nil
+func (x *xdp) closeUpdatableObjs() {
+	_ = x.updatableObjs.SrcV4.Close()
+	_ = x.updatableObjs.DstV4.Close()
+	_ = x.updatableObjs.SportV4.Close()
+	_ = x.updatableObjs.DportV4.Close()
+	_ = x.updatableObjs.ProtoV4.Close()
+	_ = x.updatableObjs.RuleActionV4.Close()
+	_ = x.updatableObjs.XdpAclFuncImm.Close()
+	x.updatableObjs = nil
+}
 
-	_ = x.objs.Close()
-	x.objs = nil
+func (x *xdp) Close() error {
+	x.detach()
+
+	x.closeUpdatableObjs()
+
+	_ = x.persistentObjs.Progs.Close()
+	_ = x.persistentObjs.XdpAclFunc.Close()
 
 	return nil
 }
 
-func (x *xdp) reload(r *rule.Rules, prevHitcount map[uint32]uint64) error {
+func (x *xdp) reload(r *Rules, prevHitcount map[uint32]uint64) error {
 	ts := time.Now()
 
 	r.FixRules()
@@ -200,22 +230,28 @@ func (x *xdp) reload(r *rule.Rules, prevHitcount map[uint32]uint64) error {
 		return fmt.Errorf("failed to load bpf spec while reloading: %w", err)
 	}
 
-	o := x.objs
-	if err := x.loadObj(); err != nil {
+	o := x.updatableObjs
+	x.updatableObjs = new(XDPACLObjects)
+
+	if err := x.loadObj(x.updatableObjs, len(r.rules)); err != nil {
 		return fmt.Errorf("failed to load xdp obj while reloading: %w", err)
 	}
 
+	_ = x.updatableObjs.Progs.Close()
+	_ = x.updatableObjs.XdpAclFunc.Close()
+	x.updatableObjs.Progs = nil
+	x.updatableObjs.XdpAclFunc = nil
+
 	if err := x.storeRules(r, prevHitcount); err != nil {
-		_ = x.objs.Close()
-		x.objs = o
+		x.closeUpdatableObjs()
+		x.updatableObjs = o
 		return fmt.Errorf("failed to store rules while reloading: %w", err)
 	}
 
-	x.detach()
-	if err := x.attach(); err != nil {
-		_ = x.objs.Close()
-		x.objs = o
-		return fmt.Errorf("failed to attach XDP while reloading: %w", err)
+	if err := x.persistentObjs.Progs.Put(uint32(0), x.updatableObjs.XdpAclFuncImm); err != nil {
+		x.closeUpdatableObjs()
+		x.updatableObjs = o
+		return fmt.Errorf("failed to update progs bpf map while reloading: %w", err)
 	}
 
 	_ = o.SrcV4.Close()
@@ -224,8 +260,6 @@ func (x *xdp) reload(r *rule.Rules, prevHitcount map[uint32]uint64) error {
 	_ = o.DportV4.Close()
 	_ = o.ProtoV4.Close()
 	_ = o.RuleActionV4.Close()
-	_ = o.Progs.Close()
-	_ = o.XdpAclFunc.Close()
 	_ = o.XdpAclFuncImm.Close()
 
 	zlog.Infof("🍉 name: %s. Cost: %s.", "reloading rules", time.Since(ts))
