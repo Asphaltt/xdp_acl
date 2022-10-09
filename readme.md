@@ -9,6 +9,7 @@ Refactor the eBPF C code and Go code of
 2. Use specified BTF file with `--kernel-btf`.
 3. Upgrade to dynamic bitmap size by rules number.
 4. Upgrade bpf map of rule action to percpu-array map by replacing percpu-hash map.
+5. Update ACL rules without detaching/attaching XDP.
 
 ## P.S.
 

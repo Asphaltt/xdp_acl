@@ -97,7 +97,7 @@ func (w *webApp) getHitCount(ctx iris.Context) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
-	hits, err := retrieveHitCount(w.xdp.objs.RuleActionV4, len(w.rules.Rules()))
+	hits, err := retrieveHitCount(w.xdp.updatableObjs.RuleActionV4, len(w.rules.Rules()))
 	if err != nil {
 		zlog.Errorf("Failed to retrieve hit count: %v", err)
 		ctx.StatusCode(iris.StatusInternalServerError)
@@ -138,7 +138,7 @@ func (w *webApp) addRule(ctx iris.Context) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
-	hitcount, err := getHitCount(w.xdp.objs.RuleActionV4, w.rules)
+	hitcount, err := getHitCount(w.xdp.updatableObjs.RuleActionV4, w.rules)
 	if err != nil {
 		zlog.Errorf("Failed to delete rule: %v", err)
 
@@ -187,7 +187,7 @@ func (w *webApp) delRule(ctx iris.Context) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
-	hitcount, err := getHitCount(w.xdp.objs.RuleActionV4, w.rules)
+	hitcount, err := getHitCount(w.xdp.updatableObjs.RuleActionV4, w.rules)
 	if err != nil {
 		zlog.Errorf("Failed to delete rule: %v", err)
 

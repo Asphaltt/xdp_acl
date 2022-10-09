@@ -16,15 +16,23 @@ import (
 func (x *xdp) doStoreRules(rules *rule.Rules, prevHitcount map[uint32]uint64) error {
 	var errg errgroup.Group
 
-	errg.Go(func() error { return storePortRules(rules.SrcPortPriorities(), x.objs.SportV4, rules.BitmapArraySize) })
-	errg.Go(func() error { return storePortRules(rules.DstPortPriorities(), x.objs.DportV4, rules.BitmapArraySize) })
-	errg.Go(func() error { return storeAddrRules(rules.SrcCIDRPriorities(), x.objs.SrcV4, rules.BitmapArraySize) })
-	errg.Go(func() error { return storeAddrRules(rules.DstCIDRPriorities(), x.objs.DstV4, rules.BitmapArraySize) })
 	errg.Go(func() error {
-		return storeProtocolRules(rules.ProtocolPriorities(), x.objs.ProtoV4, rules.BitmapArraySize)
+		return storePortRules(rules.SrcPortPriorities(), x.updatableObjs.SportV4, rules.BitmapArraySize)
 	})
 	errg.Go(func() error {
-		return storeActions(rules.PriorityActions(), rules, x.objs.RuleActionV4, prevHitcount)
+		return storePortRules(rules.DstPortPriorities(), x.updatableObjs.DportV4, rules.BitmapArraySize)
+	})
+	errg.Go(func() error {
+		return storeAddrRules(rules.SrcCIDRPriorities(), x.updatableObjs.SrcV4, rules.BitmapArraySize)
+	})
+	errg.Go(func() error {
+		return storeAddrRules(rules.DstCIDRPriorities(), x.updatableObjs.DstV4, rules.BitmapArraySize)
+	})
+	errg.Go(func() error {
+		return storeProtocolRules(rules.ProtocolPriorities(), x.updatableObjs.ProtoV4, rules.BitmapArraySize)
+	})
+	errg.Go(func() error {
+		return storeActions(rules.PriorityActions(), rules, x.updatableObjs.RuleActionV4, prevHitcount)
 	})
 
 	err := errg.Wait()
