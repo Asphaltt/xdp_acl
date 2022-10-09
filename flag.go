@@ -1,4 +1,4 @@
-package flag
+package main
 
 import "github.com/spf13/pflag"
 
@@ -22,7 +22,7 @@ type Flags struct {
 	Conf string
 }
 
-func Parse() *Flags {
+func parseFlags() *Flags {
 	var flags Flags
 
 	pflag.StringSliceVarP(&flags.Dev, "dev", "D", nil, "Input your net device name (multi devs have to be separated by ','")

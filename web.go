@@ -8,7 +8,6 @@ import (
 	"sync"
 	"time"
 
-	"xdp_acl/internal/flag"
 	"xdp_acl/internal/rule"
 
 	"github.com/kataras/iris/v12"
@@ -23,7 +22,7 @@ type webApp struct {
 	lastRuleDisplay bool
 }
 
-func runWebApp(ctx context.Context, flags *flag.Flags, rules *rule.Rules, xdp *xdp) error {
+func runWebApp(ctx context.Context, flags *Flags, rules *rule.Rules, xdp *xdp) error {
 	var w webApp
 	w.rules = rules
 	w.xdp = xdp
@@ -75,13 +74,17 @@ func runWebApp(ctx context.Context, flags *flag.Flags, rules *rule.Rules, xdp *x
 }
 
 func (w *webApp) getRules(ctx iris.Context) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	rules := w.rules.GetRulesWithRealPriority()
+
 	if w.lastRuleFixed && !w.lastRuleDisplay {
-		rules := w.rules.Rules()
 		ctx.JSON(rules[:len(rules)-1])
 		return
 	}
 
-	ctx.JSON(w.rules.Rules())
+	ctx.JSON(rules)
 }
 
 func (w *webApp) getHitCount(ctx iris.Context) {
@@ -91,7 +94,10 @@ func (w *webApp) getHitCount(ctx iris.Context) {
 		HitCount string `json:"hit_count"`
 	}
 
-	hits, err := retrieveHitCount(w.xdp.getObjs().RuleActionV4)
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	hits, err := retrieveHitCount(w.xdp.objs.RuleActionV4, len(w.rules.Rules()))
 	if err != nil {
 		zlog.Errorf("Failed to retrieve hit count: %v", err)
 		ctx.StatusCode(iris.StatusInternalServerError)
@@ -100,10 +106,10 @@ func (w *webApp) getHitCount(ctx iris.Context) {
 	}
 
 	counts := make([]ruleAction, 0, len(hits))
-	for priority, count := range hits {
+	for priority := uint32(0); priority < uint32(len(hits)); priority++ {
 		counts = append(counts, ruleAction{
-			Priority: priority,
-			HitCount: fmt.Sprintf("%d", count),
+			Priority: w.rules.GetRealPriority(uint32(priority)),
+			HitCount: fmt.Sprintf("%d", hits[priority]),
 		})
 	}
 
@@ -132,11 +138,22 @@ func (w *webApp) addRule(ctx iris.Context) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
+	hitcount, err := getHitCount(w.xdp.objs.RuleActionV4, w.rules)
+	if err != nil {
+		zlog.Errorf("Failed to delete rule: %v", err)
+
+		ctx.StatusCode(iris.StatusBadRequest)
+		w.outputError(ctx, 1002, err.Error())
+		return
+	}
+
 	w.rules.AddRule(&rule)
 
-	if w.reloadXDP(ctx) {
+	if w.reloadXDP(ctx, hitcount) {
+		retRule := rule
+		retRule.Priority = w.rules.GetRealPriority(rule.Priority)
 		ctx.StatusCode(iris.StatusCreated)
-		ctx.JSON(&rule)
+		ctx.JSON(&retRule)
 	}
 
 	if err := w.rules.Save(); err != nil {
@@ -158,14 +175,6 @@ func (w *webApp) delRule(ctx iris.Context) {
 	var rule rule.Rule
 	rule.Priority = uint32(priority)
 
-	if err := rule.CheckPriority(); err != nil {
-		zlog.Errorf("Failed to check rule priority: %v", err)
-
-		ctx.StatusCode(iris.StatusBadRequest)
-		w.outputError(ctx, 1002, err.Error())
-		return
-	}
-
 	if rule.IsFixed(w.lastRuleFixed) {
 		err := fmt.Errorf("last rule priority is fixed to delete")
 		zlog.Error(err)
@@ -178,9 +187,18 @@ func (w *webApp) delRule(ctx iris.Context) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
+	hitcount, err := getHitCount(w.xdp.objs.RuleActionV4, w.rules)
+	if err != nil {
+		zlog.Errorf("Failed to delete rule: %v", err)
+
+		ctx.StatusCode(iris.StatusBadRequest)
+		w.outputError(ctx, 1002, err.Error())
+		return
+	}
+
 	w.rules.DeleteRule(&rule)
 
-	if w.reloadXDP(ctx) {
+	if w.reloadXDP(ctx, hitcount) {
 		ctx.JSON(iris.Map{
 			"priority": rule.Priority,
 		})
@@ -191,8 +209,8 @@ func (w *webApp) delRule(ctx iris.Context) {
 	}
 }
 
-func (w *webApp) reloadXDP(ctx iris.Context) bool {
-	if err := w.xdp.reload(w.rules); err != nil {
+func (w *webApp) reloadXDP(ctx iris.Context, prevHitcount map[uint32]uint64) bool {
+	if err := w.xdp.reload(w.rules, prevHitcount); err != nil {
 		err = fmt.Errorf("failed to reload XDP: %v", err)
 		zlog.Error(err)
 

@@ -6,21 +6,12 @@ import (
 	"net/netip"
 	"os"
 	"sort"
-	"sync"
 	"time"
-
-	"xdp_acl/internal/flag"
 )
 
 const (
-	bitmapArraySize = 160
-	bitmapSize      = 64
-
-	maxPriority = bitmapArraySize*bitmapSize - 1
-	minPriority = 1
-
-	// 必须与 XDP 程序中 IP_MAX_ENTRIES_V4 保持一致
-	ipMaxEntries = bitmapArraySize * bitmapSize
+	bitmapSize = 64
+	bitmapMask = bitmapSize - 1
 
 	xdpDrop = 1
 	xdpPass = 2
@@ -35,6 +26,11 @@ const (
 
 	portBegin = 0
 	portEnd   = 65535
+)
+
+var (
+	ipMaxEntries uint32
+	maxPriority  uint32
 )
 
 type Addr struct {
@@ -64,16 +60,25 @@ func (r *Rule) IsFixed(lastRuleFixed bool) bool {
 	return lastRuleFixed && r.Priority == maxPriority
 }
 
+func (r *Rule) isLastRule() bool {
+	zeroCidr := "0.0.0.0/0"
+	return len(r.AddrSrcArr) == 1 && r.AddrSrcArr[0].CidrUser == zeroCidr &&
+		len(r.AddrDstArr) == 1 && r.AddrDstArr[0].CidrUser == zeroCidr &&
+		len(r.PortSrcArr) == 0 && len(r.PortDstArr) == 0 &&
+		r.Protos&0b111 == 0b111
+}
+
 type Rules struct {
 	file string
+
+	BitmapArraySize int
 
 	lastRuleAccept bool
 	lastRuleFixed  bool
 
 	rules []*Rule
 
-	priorityMu sync.Mutex
-	priorities map[uint32]struct{}
+	realPriorities []uint32
 
 	allSrcPortPriorities []uint32
 	allDstPortPriorities []uint32
@@ -83,7 +88,7 @@ type Rules struct {
 	srcPortPriorities  [][]uint32
 	dstPortPriorities  [][]uint32
 	protocolPriorities map[uint32][]uint32
-	priorityActions    map[uint32]uint8
+	priorityActions    []uint8
 }
 
 func (r *Rules) Rules() []*Rule                               { return r.rules }
@@ -92,20 +97,22 @@ func (r *Rules) DstCIDRPriorities() map[netip.Prefix][]uint32 { return r.dstCIDR
 func (r *Rules) SrcPortPriorities() [][]uint32                { return r.srcPortPriorities }
 func (r *Rules) DstPortPriorities() [][]uint32                { return r.dstPortPriorities }
 func (r *Rules) ProtocolPriorities() map[uint32][]uint32      { return r.protocolPriorities }
-func (r *Rules) PriorityActions() map[uint32]uint8            { return r.priorityActions }
+func (r *Rules) PriorityActions() []uint8                     { return r.priorityActions }
 
 func (r *Rules) init() {
-	r.priorities = make(map[uint32]struct{})
+	r.allSrcPortPriorities = nil
+	r.allDstPortPriorities = nil
 	r.srcCIDRPriorities = make(map[netip.Prefix][]uint32)
 	r.dstCIDRPriorities = make(map[netip.Prefix][]uint32)
 	r.srcPortPriorities = make([][]uint32, portEnd+1)
 	r.dstPortPriorities = make([][]uint32, portEnd+1)
 	r.protocolPriorities = make(map[uint32][]uint32, 3) // ICMP, TCP, UDP
-	r.priorityActions = make(map[uint32]uint8)
+	r.priorityActions = make([]uint8, len(r.rules))
 }
 
 func (r *Rules) ClearCache() {
-	r.priorities = nil
+	r.allSrcPortPriorities = nil
+	r.allDstPortPriorities = nil
 	r.srcCIDRPriorities = nil
 	r.dstCIDRPriorities = nil
 	r.srcPortPriorities = nil
@@ -130,25 +137,51 @@ func loadRules(fpath string) ([]*Rule, error) {
 	return rules, nil
 }
 
-func LoadRules(flags *flag.Flags) (*Rules, error) {
-	rules, err := loadRules(flags.Conf)
+func LoadRules(conf string, lastRuleAccept, lastRuleFixed bool) (*Rules, error) {
+	rules, err := loadRules(conf)
 	if err != nil {
 		return nil, err
 	}
 
 	var r Rules
-	r.file = flags.Conf
+	r.file = conf
 	r.rules = rules
-	r.lastRuleAccept = flags.LastRuleAccept
-	r.lastRuleFixed = flags.LastRuleFixed
+	r.lastRuleAccept = lastRuleAccept
+	r.lastRuleFixed = lastRuleFixed
 
 	return &r, r.FixRules()
+}
+
+func (r *Rules) fixBitmap() {
+	r.BitmapArraySize = roundUp(len(r.rules))
+	ipMaxEntries = uint32(r.BitmapArraySize * bitmapSize)
+	maxPriority = ipMaxEntries - 1
+}
+
+func roundUp(n int) int {
+	n >>= 6        // n /= 64
+	if n&63 != 0 { // n%64 != 0
+		n++
+	}
+
+	rounds := []int{8, 16, 32, 64, 128, 160, 256}
+	for _, r := range rounds {
+		if n < r {
+			return r
+		}
+	}
+
+	panic("bitmap array size cannot be larger than 256")
 }
 
 func (r *Rules) FixRules() error {
 	r.init()
 
-	r.sortRules()
+	r.fixBitmap()
+
+	if err := r.sortRules(); err != nil {
+		return err
+	}
 
 	if r.lastRuleFixed {
 		r.fixLastRule(r.lastRuleAccept)
@@ -167,17 +200,44 @@ func (r *Rules) FixRules() error {
 	return nil
 }
 
-func (r *Rules) sortRules() {
+func (r *Rules) GetRealPriority(p uint32) uint32 {
+	if int(p) < len(r.realPriorities) {
+		return r.realPriorities[p]
+	}
+	return p
+}
+
+func (r *Rules) sortRules() error {
 	sort.Slice(r.rules, func(i, j int) bool {
-		return r.rules[i].CreateTime > r.rules[j].CreateTime
+		return r.rules[i].Priority < r.rules[j].Priority
 	})
+
+	length := len(r.rules)
+	for i := 1; i < length; i++ {
+		if r.rules[i].Priority == r.rules[i-1].Priority {
+			return fmt.Errorf("duplicated rule's priority %d", r.rules[i].Priority)
+		}
+	}
+
+	r.realPriorities = make([]uint32, length)
+	for i := range r.rules {
+		priority := uint32(i)
+		r.realPriorities[priority] = r.rules[i].Priority
+		r.rules[i].Priority = priority
+	}
+
+	return nil
 }
 
 func (r *Rules) fixLastRule(lastRuleAccept bool) {
-	for i := range r.rules {
-		if r.rules[i].Priority == maxPriority {
-			r.rules = append(r.rules[:i], r.rules[i+1:]...)
-			break
+	if len(r.rules) != 0 {
+		if rule := r.rules[len(r.rules)-1]; rule.isLastRule() {
+			if lastRuleAccept {
+				rule.Strategy = xdpPass
+			} else {
+				rule.Strategy = xdpDrop
+			}
+			return
 		}
 	}
 
@@ -247,13 +307,6 @@ func (r *Rules) addPriorities() error {
 }
 
 func (r *Rules) addPriority(rule *Rule) error {
-	r.priorityMu.Lock()
-	defer r.priorityMu.Unlock()
-
-	if _, ok := r.priorities[rule.Priority]; ok {
-		return fmt.Errorf("priority(%d) is duplicated", rule.Priority)
-	}
-
 	if err := r.addSrcCIDRPriority(rule); err != nil {
 		return err
 	}
@@ -290,23 +343,34 @@ func (r *Rules) addPriorityAction(rule *Rule) {
 }
 
 func (r *Rules) AddRule(rule *Rule) {
-	r.rules = append(r.rules, rule)
+	rules := r.GetRulesWithRealPriority()
+	rules = append(rules, rule)
+	r.rules = rules
 }
 
 func (r *Rules) DeleteRule(rule *Rule) {
-	for i := range r.rules {
-		if r.rules[i].Priority == rule.Priority {
-			rules := make([]*Rule, len(r.rules)-1)
-			copy(rules[:i], r.rules[:i])
-			copy(rules[i:], r.rules[i+1:])
-			r.rules = rules
-			return
+	rules := r.GetRulesWithRealPriority()
+	r.rules = r.rules[:0]
+	for i := range rules {
+		if rules[i].Priority != rule.Priority {
+			r.rules = append(r.rules, rules[i])
 		}
 	}
 }
 
+func (r *Rules) GetRulesWithRealPriority() []*Rule {
+	copied := make([]*Rule, 0, len(r.rules))
+	// Note: do deep copy instead of copying pointers
+	for i := range r.rules {
+		rule := *r.rules[i]
+		rule.Priority = r.GetRealPriority(r.rules[i].Priority)
+		copied = append(copied, &rule)
+	}
+	return copied
+}
+
 func (r *Rules) Save() error {
-	data, err := json.MarshalIndent(r.rules, "", "    ")
+	data, err := json.MarshalIndent(r.GetRulesWithRealPriority(), "", "    ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal rules: %w", err)
 	}

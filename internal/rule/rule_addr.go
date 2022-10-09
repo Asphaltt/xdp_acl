@@ -95,7 +95,7 @@ func (r *Rules) checkCIDRLimit(mExist map[netip.Prefix][]uint32, mAdding map[net
 		}
 	}
 
-	if total := len(mExist) + nAdding; total > ipMaxEntries {
+	if total := len(mExist) + nAdding; total > int(ipMaxEntries) {
 		return fmt.Errorf("the number of entry %d exceeds the limit %d", total, ipMaxEntries)
 	}
 

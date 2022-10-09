@@ -7,19 +7,18 @@ import (
 	"syscall"
 	"time"
 
-	"xdp_acl/internal/flag"
 	"xdp_acl/internal/rule"
 
 	"github.com/cilium/ebpf/rlimit"
 	"golang.org/x/sync/errgroup"
 )
 
-//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc=clang XDPACL ./ebpf/xdp_acl.c --  -D__TARGET_ARCH_x86 -I./ebpf/headers -nostdinc  -Wall -o3
+//go:generate bash ./script/compile-bpf.sh
 
 func main() {
 	b := time.Now()
 
-	flags := flag.Parse()
+	flags := parseFlags()
 
 	if err := rlimit.RemoveMemlock(); err != nil {
 		zlog.Fatalf("Failed to remove memory lock: %v", err)
@@ -31,7 +30,7 @@ func main() {
 	}
 
 	ts := time.Now()
-	rules, err := rule.LoadRules(flags)
+	rules, err := rule.LoadRules(flags.Conf, flags.LastRuleAccept, flags.LastRuleFixed)
 	if err != nil {
 		zlog.Errorf("Failed to load rules: %v", err)
 		return

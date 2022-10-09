@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/binary"
 	"fmt"
-	"math/bits"
 	"net/netip"
 	"runtime"
 	"unsafe"
@@ -14,15 +13,19 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-func (x *xdp) doStoreRules(rules *rule.Rules, oldAction *ebpf.Map) error {
+func (x *xdp) doStoreRules(rules *rule.Rules, prevHitcount map[uint32]uint64) error {
 	var errg errgroup.Group
 
-	errg.Go(func() error { return storePortRules(rules.SrcPortPriorities(), x.objs.SportV4) })
-	errg.Go(func() error { return storePortRules(rules.DstPortPriorities(), x.objs.DportV4) })
-	errg.Go(func() error { return storeAddrRules(rules.SrcCIDRPriorities(), x.objs.SrcV4) })
-	errg.Go(func() error { return storeAddrRules(rules.DstCIDRPriorities(), x.objs.DstV4) })
-	errg.Go(func() error { return storeProtocolRules(rules.ProtocolPriorities(), x.objs.ProtoV4) })
-	errg.Go(func() error { return storeActions(rules.PriorityActions(), x.objs.RuleActionV4, oldAction) })
+	errg.Go(func() error { return storePortRules(rules.SrcPortPriorities(), x.objs.SportV4, rules.BitmapArraySize) })
+	errg.Go(func() error { return storePortRules(rules.DstPortPriorities(), x.objs.DportV4, rules.BitmapArraySize) })
+	errg.Go(func() error { return storeAddrRules(rules.SrcCIDRPriorities(), x.objs.SrcV4, rules.BitmapArraySize) })
+	errg.Go(func() error { return storeAddrRules(rules.DstCIDRPriorities(), x.objs.DstV4, rules.BitmapArraySize) })
+	errg.Go(func() error {
+		return storeProtocolRules(rules.ProtocolPriorities(), x.objs.ProtoV4, rules.BitmapArraySize)
+	})
+	errg.Go(func() error {
+		return storeActions(rules.PriorityActions(), rules, x.objs.RuleActionV4, prevHitcount)
+	})
 
 	err := errg.Wait()
 	if err != nil {
@@ -32,20 +35,21 @@ func (x *xdp) doStoreRules(rules *rule.Rules, oldAction *ebpf.Map) error {
 	return nil
 }
 
-func storePortRules(ports [][]uint32, m *ebpf.Map) error {
+func storePortRules(ports [][]uint32, m *ebpf.Map, bitmapArraySize int) error {
 	for port, priorities := range ports {
 		// ignore the missing-priorities ports
 		if len(priorities) == 0 {
 			continue
 		}
 
-		var b bitmap
+		b := newBitmap(bitmapArraySize)
 		for _, prio := range priorities {
 			b.Set(prio)
 		}
 
 		k := htons(uint16(port))
-		if err := m.Put(k, b); err != nil {
+		v, _ := b.MarshalBinary()
+		if err := m.Put(k, v); err != nil {
 			return fmt.Errorf("failed to update rules of port(%d) to bpf map: %w", port, err)
 		}
 	}
@@ -58,14 +62,14 @@ func htons(n uint16) uint16 {
 	return binary.BigEndian.Uint16(b[:])
 }
 
-func storeAddrRules(addrs map[netip.Prefix][]uint32, m *ebpf.Map) error {
+func storeAddrRules(addrs map[netip.Prefix][]uint32, m *ebpf.Map, bitmapArraySize int) error {
 	type lpmKey struct {
 		Prefix uint32
 		Addr   [4]uint8
 	}
 
 	for cidr, priorities := range addrs {
-		var b bitmap
+		b := newBitmap(bitmapArraySize)
 		for _, prio := range priorities {
 			b.Set(prio)
 		}
@@ -74,7 +78,8 @@ func storeAddrRules(addrs map[netip.Prefix][]uint32, m *ebpf.Map) error {
 		k.Prefix = uint32(cidr.Bits())
 		k.Addr = cidr.Addr().As4() // network order
 
-		if err := m.Put(k, b); err != nil {
+		v, _ := b.MarshalBinary()
+		if err := m.Put(k, v); err != nil {
 			return fmt.Errorf("failed to update rules of CIDR(%s) to bpf map: %w", cidr, err)
 		}
 	}
@@ -82,37 +87,20 @@ func storeAddrRules(addrs map[netip.Prefix][]uint32, m *ebpf.Map) error {
 	return nil
 }
 
-func storeProtocolRules(protos map[uint32][]uint32, m *ebpf.Map) error {
+func storeProtocolRules(protos map[uint32][]uint32, m *ebpf.Map, bitmapArraySize int) error {
 	for proto, priorities := range protos {
-		var b bitmap
+		b := newBitmap(bitmapArraySize)
 		for _, prio := range priorities {
 			b.Set(prio)
 		}
 
-		if err := m.Put(proto, b); err != nil {
+		v, _ := b.MarshalBinary()
+		if err := m.Put(proto, v); err != nil {
 			return fmt.Errorf("failed to update rules of protocol(%d) to bpf map: %w", proto, err)
 		}
 	}
 
 	return nil
-}
-
-type actionKey struct {
-	BitmapFFS    uint64 // the value of bit on uint64
-	BitmapArrIdx uint64 // index of array
-}
-
-func getActionKey(priority uint32) actionKey {
-	var key actionKey
-	key.BitmapFFS = 1 << (priority & bitmapMask)
-	key.BitmapArrIdx = uint64(priority) / bitmapSize
-	return key
-}
-
-func (k actionKey) getPriority() uint64 {
-	l := bits.LeadingZeros64(k.BitmapFFS)
-	shift := bitmapMask - l
-	return k.BitmapArrIdx*bitmapSize + uint64(shift)
 }
 
 type actionValue struct {
@@ -122,30 +110,19 @@ type actionValue struct {
 
 var numCPU = runtime.NumCPU()
 
-func getActionValue(strategy uint8, count uint64) []actionValue {
+func getActionValue(action uint8, count uint64) []actionValue {
 	val := make([]actionValue, numCPU)
 	for i := range val {
-		val[i].Action = uint64(strategy)
+		val[i].Action = uint64(action)
 		val[i].Count = count
 	}
 	return val
 }
 
 // storeActions retrieves the old-hit-count-data from oldMap, and updates it to m.
-func storeActions(actions map[uint32]uint8, m, oldMap *ebpf.Map) error {
-	var counts map[uint32]uint64
-	if oldMap != nil {
-		var err error
-		counts, err = retrieveHitCount(oldMap)
-		if err != nil {
-			zlog.Warnf("Failed to retrieve hit count while storing actions: %v", err)
-		}
-	} else {
-		counts = make(map[uint32]uint64)
-	}
-
+func storeActions(actions []uint8, r *rule.Rules, m *ebpf.Map, prevHitCount map[uint32]uint64) error {
 	for priority, action := range actions {
-		key, val := getActionKey(priority), getActionValue(action, counts[priority])
+		key, val := uint32(priority), getActionValue(action, prevHitCount[r.GetRealPriority(uint32(priority))])
 		if err := m.Put(key, val); err != nil {
 			return fmt.Errorf("failed to update action of priority(%d) to bpf map: %w", priority, err)
 		}
@@ -154,8 +131,21 @@ func storeActions(actions map[uint32]uint8, m, oldMap *ebpf.Map) error {
 	return nil
 }
 
-func retrieveHitCount(m *ebpf.Map) (map[uint32]uint64, error) {
-	counts := make(map[uint32]uint64, 1024)
+func getHitCount(m *ebpf.Map, r *rule.Rules) (map[uint32]uint64, error) {
+	counts, err := retrieveHitCount(m, len(r.Rules()))
+	if err != nil {
+		return nil, err
+	}
+
+	hits := make(map[uint32]uint64, len(counts))
+	for i, c := range counts {
+		hits[r.GetRealPriority(uint32(i))] = c
+	}
+	return hits, nil
+}
+
+func retrieveHitCount(m *ebpf.Map, ruleNum int) ([]uint64, error) {
+	counts := make([]uint64, ruleNum)
 
 	sumOfVal := func(val []actionValue) uint64 {
 		var sum uint64
@@ -165,14 +155,15 @@ func retrieveHitCount(m *ebpf.Map) (map[uint32]uint64, error) {
 		return sum
 	}
 
-	key, val := actionKey{}, make([]actionValue, numCPU)
-	iter := m.Iterate()
-	for iter.Next(&key, &val) {
-		counts[uint32(key.getPriority())] = sumOfVal(val)
-	}
+	var err error
+	value := make([]actionValue, numCPU)
+	for key := uint32(0); key < uint32(ruleNum); key++ {
+		err = m.Lookup(key, &value)
+		if err != nil {
+			return counts, fmt.Errorf("failed to retrieve hit count: %w", err)
+		}
 
-	if err := iter.Err(); err != nil {
-		return counts, fmt.Errorf("failed to retrieve hit count: %w", err)
+		counts[key] = sumOfVal(value)
 	}
 
 	return counts, nil

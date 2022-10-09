@@ -16,3 +16,6 @@ acl
 
 # editor
 .vscode/
+
+# generated files
+/ebpf/headers/libxdp_generated.h

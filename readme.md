@@ -7,6 +7,8 @@ Refactor the eBPF C code and Go code of
 
 1. Use CO-RE to enable XDP log with `--debug` dynamically.
 2. Use specified BTF file with `--kernel-btf`.
+3. Upgrade to dynamic bitmap size by rules number.
+4. Upgrade bpf map of rule action to percpu-array map by replacing percpu-hash map.
 
 ## P.S.
 
@@ -16,7 +18,9 @@ filtering](http://vger.kernel.org/lpc_net2018_talks/ebpf-firewall-paper-LPC.pdf)
 From the reference, the advice is really important to deploy XDP ACL.
 
 ```txt
-We do not write or update these maps once the program is loaded to avoid any lock contentions. Instead, for any change in configuration, we create a new program with new maps and modify the XDP program in the program array.
+We do not write or update these maps once the program is loaded to avoid any lock
+contentions. Instead, for any change in configuration, we create a new program with
+new maps and modify the XDP program in the program array.
 ```
 
 ---

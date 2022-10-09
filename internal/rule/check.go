@@ -2,15 +2,6 @@ package rule
 
 import "fmt"
 
-func (r *Rule) CheckPriority() error {
-	if minPriority <= r.Priority && r.Priority <= maxPriority {
-		return nil
-	}
-
-	return fmt.Errorf("rule priority(%d) is invalid, should be %d <= PRIORITY <= %d",
-		r.Priority, minPriority, maxPriority)
-}
-
 func (r *Rule) checkProtos() error {
 	if r.Protos>>3 > 0 || r.Protos&0b0111 == 0 {
 		return fmt.Errorf("rule protos(%04b) is invalid", r.Protos)
@@ -30,7 +21,6 @@ func (r *Rule) checkStrategy() error {
 func (r *Rule) check() error {
 	type checker func() error
 	checkers := []checker{
-		r.CheckPriority,
 		r.checkProtos,
 		r.checkStrategy,
 	}
