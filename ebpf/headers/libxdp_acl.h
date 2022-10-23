@@ -130,7 +130,7 @@ get_priority(__u64 bit, __u64 index) {
     return (__u32)((index << 6) + shift) - 1; // get the index of the '1' bit in bitmap
 }
 
-static __always_inline int get_rule_action_v4(__u64 *rule_array[], __u32 rules_num) {
+static __always_inline int get_rule_action_v4(__u64 *rule_array[], __u32 rules_num, __u32 limit) {
     /*
     三种特殊情况:
       未匹配到规则:
@@ -157,11 +157,11 @@ static __always_inline int get_rule_action_v4(__u64 *rule_array[], __u32 rules_n
             break;
         }
         rule_array_index++;
-    }
 
-    if (rule_array_index >= XDPACL_BITMAP_ARRAY_SIZE_LIMIT) {
-        // 特殊情况 2
-        return XDP_PASS;
+        if (rule_array_index >= limit) {
+            // 特殊情况 2
+            return XDP_PASS;
+        }
     }
 
     hit_rules = hit_rules & (-hit_rules); // get the very first '1' bit
@@ -248,7 +248,7 @@ xdp_acl_ipv4(struct xdp_md *ctx) {
 
 #undef lookup_map
 
-    return get_rule_action_v4(rule_arr, rules_num);
+    return get_rule_action_v4(rule_arr, rules_num, XDPACL_BITMAP_ARRAY_SIZE_LIMIT);
 }
 
 #endif // __LIBXDP_ACL_H_

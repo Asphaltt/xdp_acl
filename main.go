@@ -11,7 +11,7 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-//go:generate bash ./script/compile-bpf.sh
+//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc=clang XDPACL ./ebpf/xdp_acl.c --  -D__TARGET_ARCH_x86 -I./ebpf/headers -nostdinc  -Wall -o3
 
 func main() {
 	b := time.Now()

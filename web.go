@@ -31,7 +31,7 @@ func runWebApp(ctx context.Context, flags *Flags, rules *Rules, xdp *xdp) error 
 		<-ctx.Done()
 
 		// shutdown the running web server
-		app.Shutdown(context.TODO())
+		_ = app.Shutdown(context.TODO())
 	}()
 
 	app.HandleDir("/", "./public", iris.DirOptions{
@@ -78,11 +78,11 @@ func (w *webApp) getRules(ctx iris.Context) {
 	rules := w.rules.GetRulesWithRealPriority()
 
 	if w.lastRuleFixed && !w.lastRuleDisplay {
-		ctx.JSON(rules[:len(rules)-1])
+		_, _ = ctx.JSON(rules[:len(rules)-1])
 		return
 	}
 
-	ctx.JSON(rules)
+	_, _ = ctx.JSON(rules)
 }
 
 func (w *webApp) getHitCount(ctx iris.Context) {
@@ -111,7 +111,7 @@ func (w *webApp) getHitCount(ctx iris.Context) {
 		})
 	}
 
-	ctx.JSON(counts)
+	_, _ = ctx.JSON(counts)
 }
 
 func (w *webApp) addRule(ctx iris.Context) {
@@ -151,11 +151,11 @@ func (w *webApp) addRule(ctx iris.Context) {
 		retRule := rule
 		retRule.Priority = w.rules.GetRealPriority(rule.Priority)
 		ctx.StatusCode(iris.StatusCreated)
-		ctx.JSON(&retRule)
-	}
+		_, _ = ctx.JSON(&retRule)
 
-	if err := w.rules.Save(); err != nil {
-		zlog.Errorf("Failed to save rules: %v", err)
+		if err := w.rules.Save(); err != nil {
+			zlog.Errorf("Failed to save rules: %v", err)
+		}
 	}
 }
 
@@ -197,13 +197,13 @@ func (w *webApp) delRule(ctx iris.Context) {
 	w.rules.DeleteRule(&rule)
 
 	if w.reloadXDP(ctx, hitcount) {
-		ctx.JSON(iris.Map{
+		_, _ = ctx.JSON(iris.Map{
 			"priority": rule.Priority,
 		})
-	}
 
-	if err := w.rules.Save(); err != nil {
-		zlog.Errorf("Failed to save rules: %v", err)
+		if err := w.rules.Save(); err != nil {
+			zlog.Errorf("Failed to save rules: %v", err)
+		}
 	}
 }
 
@@ -225,7 +225,7 @@ func (w *webApp) notImplement(ctx iris.Context) {
 }
 
 func (w *webApp) outputError(ctx iris.Context, code int, msg string) {
-	ctx.JSON(iris.Map{
+	_, _ = ctx.JSON(iris.Map{
 		"errCode": code,
 		"msg":     msg,
 	})

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+
 	"github.com/natefinch/lumberjack"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -14,10 +16,10 @@ func init() {
 
 	core := zapcore.NewCore(
 		encoder,
-		// zapcore.NewMultiWriteSyncer(zapcore.AddSync(os.Stdout), writeSyncer),
-		zapcore.NewMultiWriteSyncer(writeSyncer),
-		zapcore.InfoLevel,
-		// zapcore.DebugLevel,
+		zapcore.NewMultiWriteSyncer(zapcore.AddSync(os.Stdout), writeSyncer),
+		// zapcore.NewMultiWriteSyncer(writeSyncer),
+		// zapcore.InfoLevel,
+		zapcore.DebugLevel,
 	)
 
 	logger := zap.New(core, zap.AddCaller())

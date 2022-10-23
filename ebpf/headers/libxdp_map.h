@@ -5,7 +5,7 @@
 
 #include "bpf_helpers.h"
 
-#include "libxdp_generated.h"
+#define BITMAP_ARRAY_SIZE 160
 
 // 支持的最多规则条数, 必须是 64 的整数倍; 比如: 64 * 16 == 1024
 #define RULE_NUM_MAX_ENTRIES_V4 64 * BITMAP_ARRAY_SIZE

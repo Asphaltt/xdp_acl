@@ -10,8 +10,6 @@ import (
 	"github.com/vishvananda/netlink"
 )
 
-type XDPACLObjects = XDPACL8Objects
-
 type xdp struct {
 	devices []netlink.Link
 	xdps    []link.Link
@@ -41,12 +39,19 @@ func newXdp(flags *Flags, r *Rules) (*xdp, error) {
 		x.devices = append(x.devices, l)
 	}
 
+	b2u32 := func(b bool) uint32 {
+		if b {
+			return 1
+		}
+		return 0
+	}
+
 	x.debugMode = b2u32(flags.Debug)
-	x.bitmapArraySize = uint32(r.BitmapArraySize)
+	x.fixBitmapArraySize(len(r.rules))
 
 	err := x.loadSpec()
 	if err != nil {
-		return nil, fmt.Errorf("failed to load bpf spec: %w", err)
+		return nil, err
 	}
 
 	if flags.KernelBTF != "" {
@@ -99,60 +104,76 @@ func newXdp(flags *Flags, r *Rules) (*xdp, error) {
 	return &x, nil
 }
 
-func b2u32(b bool) uint32 {
-	if b {
-		return 1
-	}
-	return 0
-}
-
 func (x *xdp) loadSpec() error {
 	var err error
-	switch n := x.bitmapArraySize; n {
-	case 8:
-		x.bpfSpec, err = LoadXDPACL8()
-	case 16:
-		x.bpfSpec, err = LoadXDPACL16()
-	case 32:
-		x.bpfSpec, err = LoadXDPACL32()
-	case 64:
-		x.bpfSpec, err = LoadXDPACL64()
-	case 128:
-		x.bpfSpec, err = LoadXDPACL128()
-	case 160:
-		x.bpfSpec, err = LoadXDPACL160()
-	case 256:
-		x.bpfSpec, err = LoadXDPACL256()
-	default:
-		err = fmt.Errorf("no bpf spec for %d", n)
+	x.bpfSpec, err = LoadXDPACL()
+	if err != nil {
+		return fmt.Errorf("failed to load bpf spec: %w", err)
 	}
-	return err
+
+	// const bpfFlagValueSize = 1 << 13
+
+	valueSize := x.bitmapArraySize << 3
+	fixMaps := func(names ...string) {
+		for _, name := range names {
+			mapSpec := x.bpfSpec.Maps[name]
+			// zlog.Debugf("old bpf spec of %s: %v, key btf: %v, value btf: %v", name, mapSpec, mapSpec.Key, mapSpec.Value)
+			mapSpec.ValueSize = valueSize
+			mapSpec.Value.(*btf.Array).Nelems = x.bitmapArraySize
+
+			// zlog.Debugf("new bpf spec of %s: %v, key btf: %v, value btf: %v", name, mapSpec, mapSpec.Key, mapSpec.Value)
+
+			mapSpec.BTF = nil // disable BTF for bpf map because of fault to change the valueSize
+
+			// mapSpec.Flags |= bpfFlagValueSize
+		}
+	}
+	fixMaps("src_v4", "dst_v4", "sport_v4", "dport_v4", "proto_v4")
+
+	// mSpec := x.bpfSpec.Maps["src_v4"]
+	// spew.Dump(mSpec.BTF)
+	// spew.Dump(mSpec.Value)
+
+	return nil
 }
 
-func getBitmapArraySizeLimit(n int) int {
-	return n>>6 + 1 // n/64 + 1
+func (x *xdp) fixBitmapArraySize(ruleNum int) {
+	x.bitmapArraySize = (uint32(ruleNum)>>6 + 1) << 3
 }
 
 func (x *xdp) loadObj(objs interface{}, ruleNum int) error {
 	rc := map[string]interface{}{
 		"XDPACL_DEBUG":                   x.debugMode,
-		"XDPACL_BITMAP_ARRAY_SIZE_LIMIT": uint32(getBitmapArraySizeLimit(ruleNum)),
+		"XDPACL_BITMAP_ARRAY_SIZE_LIMIT": uint32(x.bitmapArraySize),
 	}
 	if err := x.bpfSpec.RewriteConstants(rc); err != nil {
 		return fmt.Errorf("failed to rewrite constants: %v: %w", rc, err)
 	}
-	zlog.Infof("XDP rewrote constants: %v", rc)
+	zlog.Infof("XDP rewrites constants: %v", rc)
 
 	var opts ebpf.CollectionOptions
 	opts.Programs.KernelTypes = x.btfSpec
-	// opts.Programs.LogLevel = ebpf.LogLevelBranch | ebpf.LogLevelInstruction
-	// opts.Programs.LogSize = ebpf.DefaultVerifierLogSize * 10000
+	opts.Programs.LogLevel = ebpf.LogLevelBranch | ebpf.LogLevelInstruction
+	opts.Programs.LogSize = ebpf.DefaultVerifierLogSize * 16
 
 	if err := x.bpfSpec.LoadAndAssign(objs, &opts); err != nil {
-		return fmt.Errorf("failed to load and assign objs: %w", err)
+		zlog.Warn("Failed to load bpf obj:")
+		printVerifierError(err)
+		return fmt.Errorf("failed to load bpf obj: %w", err)
 	}
 
 	return nil
+}
+
+func printVerifierError(err error) {
+	zlog.Warnf("%T: %+v", err, err)
+
+	u, ok := err.(interface {
+		Unwrap() error
+	})
+	if ok {
+		printVerifierError(u.Unwrap())
+	}
 }
 
 func (x *xdp) storeRules(r *Rules, prevHitcount map[uint32]uint64) error {
@@ -222,9 +243,11 @@ func (x *xdp) Close() error {
 func (x *xdp) reload(r *Rules, prevHitcount map[uint32]uint64) error {
 	ts := time.Now()
 
-	r.FixRules()
+	if err := r.FixRules(); err != nil {
+		return fmt.Errorf("failed to pre-handle rules: %w", err)
+	}
 
-	x.bitmapArraySize = uint32(r.BitmapArraySize)
+	x.fixBitmapArraySize(len(r.rules))
 
 	if err := x.loadSpec(); err != nil {
 		return fmt.Errorf("failed to load bpf spec while reloading: %w", err)
