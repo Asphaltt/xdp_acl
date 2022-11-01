@@ -4,7 +4,7 @@ PROJECT = xdp_acl
 .PHONY: clean $(PROJECT) pub
 
 
-all: xdp_acl.c main.go
+all: main.go
 	@go generate && go build
 
 clean:
