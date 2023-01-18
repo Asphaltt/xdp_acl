@@ -16,7 +16,7 @@ build_bpf() {
 #endif // __LIBXDP_GENERATED_H_
 EOF
 
-    go run github.com/cilium/ebpf/cmd/bpf2go -cc=clang "XDPACL${num}" ./ebpf/xdp_acl.c --  -D__TARGET_ARCH_x86 -I./ebpf/headers -nostdinc  -Wall -o3
+    go run github.com/cilium/ebpf/cmd/bpf2go -cc=clang "XDPACL${num}" ./ebpf/xdp_acl.c --  -D__TARGET_ARCH_x86 -I./ebpf/headers -nostdinc  -Wall -O3
 }
 
 main() {
